@@ -42,6 +42,9 @@ module.exports = {
       }
 
       await form.$('input[name="username"]').then(el => el.type(username))
+      await page.waitForTimeout(1000)
+      await form.$('button#submit').then(el => el.click())
+      await page.waitForTimeout(1000)
       await form.$('input[name="password"]').then(el => el.type(password))
 
       await page.waitForTimeout(1000)
