@@ -1,11 +1,11 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": "Swile",
   "type": "konnector",
   "language": "node",
   "icon": "icon.svg",
   "slug": "swile",
-  "source": "git@github.com:zdimension/cozy-swile-connector.git",
+  "source": "git://github.com/florian-bellencontre/cozy-swile-connector.git#build",
   "editor": "zdimension",
   "vendor_link": "https://swile.co",
   "categories": ["banking"],

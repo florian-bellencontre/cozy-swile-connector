@@ -36,7 +36,7 @@ class SwileConnector extends BaseKonnector {
       log('info', 'Parsing ...')
 
       const accounts = this.parseAccounts(cards)
-      const operations = this.parseOps(ops)
+      const operations = this.parseOps(ops, cards)
       const categorizedTransactions = await categorize(operations)
       const { accounts: savedAccounts } = await reconciliator.save(
         accounts,
@@ -67,23 +67,38 @@ class SwileConnector extends BaseKonnector {
     })
   }
 
-  parseOps(ops) {
-    return ops.map(op => {
-      const transaction = op.transactions.filter(t => t.type === 'ORIGIN')[0]
-      const wallet = transaction.wallet
-      const date = new Date(op.date).toISOString()
-      return {
-        vendorId: transaction.id,
-        vendorAccountId: wallet.uuid,
-        amount: transaction.amount.value / 100,
-        date: date,
-        dateOperation: date,
-        dateImport: new Date().toISOString(),
-        currency: transaction.amount.currency.iso_3,
-        label: op.name,
-        originalBankLabel: op.name
-      }
-    })
+  parseOps(ops, cards) {
+    return ops
+      .map(op => {
+        const transaction = op.transactions.find(t => t.type === 'ORIGIN')
+        if (!transaction) {
+          log('warn', `No origin transaction found for ${op.name}`)
+          return null
+        }
+        // Some operations (e.g. top-ups) have no wallet on their origin
+        // transaction. Fall back to the first wallet so the reconciliator can
+        // still attach them to an account (vendorAccountId must match the
+        // vendorId of a saved account, otherwise the whole run fails).
+        const wallet = transaction.wallet
+        const walletId = wallet ? wallet.uuid : cards[0] && cards[0].id
+        if (!walletId) {
+          log('warn', `No wallet found for operation ${op.name}, skipping it`)
+          return null
+        }
+        const date = new Date(op.date).toISOString()
+        return {
+          vendorId: transaction.id,
+          vendorAccountId: walletId,
+          amount: transaction.amount.value / 100,
+          date: date,
+          dateOperation: date,
+          dateImport: new Date().toISOString(),
+          currency: transaction.amount.currency.iso_3,
+          label: op.name,
+          originalBankLabel: op.name
+        }
+      })
+      .filter(Boolean)
   }
 }
 

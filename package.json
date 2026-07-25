@@ -1,10 +1,10 @@
 {
   "name": "cozy-swile-connector",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "",
   "repository": {
     "type": "git",
-    "url": "git@github.com:zdimension/cozy-swile-connector.git"
+    "url": "git@github.com:florian-bellencontre/cozy-swile-connector.git"
   },
   "keywords": [
     "cozy cloud",
