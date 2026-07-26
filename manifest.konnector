@@ -1,5 +1,5 @@
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "name": "Swile",
   "type": "konnector",
   "language": "node",
@@ -30,10 +30,7 @@
       "type": "io.cozy.bank.operations"
     },
     "accounts": {
-      "type": "io.cozy.accounts",
-      "verbs": [
-        "GET"
-      ]
+      "type": "io.cozy.accounts"
     },
     "bank.balancehistories": {
       "description": "Required to save balance histories",

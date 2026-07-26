@@ -25,9 +25,6 @@ class SwileConnector extends BaseKonnector {
       cozyClient.new.login()
     }
 
-    if (this.browser) {
-      await this.browser.close()
-    }
     try {
       const token = await getToken(this, fields.login, fields.password)
       const [cards, ops] = await getSwileData(fields.login, token)
@@ -50,6 +47,9 @@ class SwileConnector extends BaseKonnector {
     } catch (e) {
       log('error', e)
       log('error', e.stack)
+      // let the stack report the proper error (LOGIN_FAILED, 2FA...) to Cozy
+      // Home instead of silently marking the job as successful
+      throw e
     }
   }
 

@@ -1,69 +1,127 @@
-const puppeteer = require('puppeteer')
-const { log } = require('cozy-konnector-libs')
-const fs = require('fs')
+const { log, errors } = require('cozy-konnector-libs')
 
-const baseUrl = 'https://team.swile.co'
-const walletUrl = `${baseUrl}/wallets`
+const TOKEN_URL = 'https://directory.swile.co/oauth/token'
+// OAuth client id of the official Swile web app. It is public: it is shipped
+// in the frontend bundle of directory.swile.co.
+const CLIENT_ID =
+  '533bf5c8dbd05ef18fd01e2bbbab3d7f69e3511dd08402862b5de63b9a238923'
+
+const requestToken = async payload => {
+  const response = await fetch(TOKEN_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Swile-Platform': 'web'
+    },
+    body: JSON.stringify({ client_id: CLIENT_ID, ...payload })
+  })
+  let data = {}
+  try {
+    data = await response.json()
+  } catch (e) {
+    // some error responses have no json body
+  }
+  return { ok: response.ok, status: response.status, data }
+}
+
+// Reuse the refresh token saved in the account data by a previous run so
+// scheduled runs never need a new 2FA code.
+const refreshSession = async connector => {
+  let auth
+  try {
+    auth = connector.getAccountData().auth
+  } catch (e) {
+    return null
+  }
+  if (!auth || !auth.refreshToken) {
+    return null
+  }
+  log('info', 'Refreshing the saved Swile session')
+  const result = await requestToken({
+    grant_type: 'refresh_token',
+    refresh_token: auth.refreshToken
+  })
+  if (!result.ok) {
+    log('info', 'Saved session rejected, falling back to password login')
+    return null
+  }
+  return result
+}
+
+// waitForTwoFaCode needs a manual run from Cozy Home; in standalone/dev mode
+// the stub never receives the code so we read it from the terminal instead.
+const getTwoFaCode = (connector, channel) => {
+  const type = channel === 'sms' ? 'sms' : 'email'
+  if (['standalone', 'development', 'test'].includes(process.env.NODE_ENV)) {
+    const readline = require('readline')
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    })
+    return new Promise(resolve =>
+      rl.question(`Enter the 2FA code received by ${type}: `, answer => {
+        rl.close()
+        resolve(answer.trim())
+      })
+    )
+  }
+  return connector.waitForTwoFaCode({ type })
+}
+
+const saveSession = async (connector, data) => {
+  try {
+    await connector.saveAccountData({
+      auth: {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token
+      }
+    })
+  } catch (e) {
+    log('warn', `Could not save the Swile session: ${e.message}`)
+  }
+}
 
 module.exports = {
   getToken: async function (connector, username, password) {
-    log('info', 'Get token')
-    let dataDir = `./data/${username}`
-    // create data dir if it doesn't exist
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir)
-    }
-    let browser = await puppeteer.launch({
-      headless: false,
-      userDataDir: dataDir
-    })
-    let page = await browser.newPage()
-    await page.goto(walletUrl)
-    // wait for idle
-    await page.waitForTimeout(1000)
-    try {
-      await page.waitForFunction(`window.location.href === "${walletUrl}"`, {
-        timeout: 5000
+    let result = await refreshSession(connector)
+    let askedTwoFa = false
+
+    if (!result) {
+      result = await requestToken({
+        grant_type: 'password',
+        username,
+        password
       })
-    } catch (e) {
-      log('info', 'Not logged in, logging in...')
-      // original auth code from @Guekka
-      await page.waitForSelector('form', { timeout: 1000 })
 
-      const form = await page.$('form')
-
-      // reject cookies
-      try {
-        await page
-          .waitForSelector('#onetrust-reject-all-handler', { timeout: 2000 })
-          .then(el => el.click())
-      } catch (e) {
-        log('info', 'No cookie banner')
+      if (!result.ok && result.data.error === 'missing_authentication_code') {
+        // The rejected call above made Swile send an OTP to the user
+        askedTwoFa = true
+        log('info', `2FA code sent by ${result.data.channel}`)
+        const code = await getTwoFaCode(connector, result.data.channel)
+        result = await requestToken({
+          grant_type: 'password',
+          username,
+          password,
+          authentication_code: code
+        })
       }
-
-      await form.$('input[name="username"]').then(el => el.type(username))
-      await page.waitForTimeout(1000)
-      await form.$('button#submit').then(el => el.click())
-      await page.waitForTimeout(1000)
-      await form.$('input[name="password"]').then(el => el.type(password))
-
-      await page.waitForTimeout(1000)
-
-      await form
-        .waitForSelector('button[type="submit"]', { timeout: 20000 })
-        .then(el => el.click())
-      await page.waitForFunction(`window.location.href === "${walletUrl}"`, {
-        timeout: 40000
-      })
     }
 
-    const jwt = await page.cookies().then(cookies => {
-      return cookies.find(c => c.name === 'lunchr:jwt').value
-    })
+    if (!result.ok) {
+      log('error', `Swile auth failed: ${result.status}`)
+      log('error', JSON.stringify(result.data))
+      if (askedTwoFa) {
+        throw new Error(errors.USER_ACTION_NEEDED_WRONG_TWOFA_CODE)
+      }
+      throw new Error(
+        result.data.error === 'invalid_grant'
+          ? errors.LOGIN_FAILED
+          : errors.VENDOR_DOWN
+      )
+    }
 
     await connector.notifySuccessfulLogin()
-
-    await browser.close()
-    return jwt
+    await saveSession(connector, result.data)
+    return result.data.access_token
   }
 }
