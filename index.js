@@ -45,7 +45,7 @@ class SwileConnector extends BaseKonnector {
         categorizedTransactions
       )
 
-      log('info', savedAccounts)
+      log('info', `Saved ${savedAccounts.length} account(s)`)
 
       const balances = await fetchBalances(savedAccounts)
       await saveBalances(balances)
@@ -60,34 +60,55 @@ class SwileConnector extends BaseKonnector {
 
   parseAccounts(cards) {
     return cards.map(card => {
+      const balance = card.balance || {}
       return {
         vendorId: card.id,
         number: card.id,
-        currency: card.balance.currency.iso_3,
+        currency: (balance.currency && balance.currency.iso_3) || 'EUR',
         institutionLabel: 'Swile',
         label: card.label,
-        balance: card.balance.value,
+        balance: balance.value || 0,
         type: 'Checkings'
       }
     })
   }
 
   parseOps(ops, cards) {
-    return ops
+    const knownWalletIds = new Set(cards.map(card => card.id))
+    // Only fall back to a single wallet when there is no ambiguity: with
+    // several wallets we cannot guess which one an operation belongs to, and
+    // attaching it to the wrong account would silently corrupt the balances.
+    const fallbackWalletId = cards.length === 1 ? cards[0].id : null
+    let skipped = 0
+
+    const operations = ops
       .map(op => {
         const transaction = op.transactions.find(t => t.type === 'ORIGIN')
         if (!transaction) {
           log('warn', `No origin transaction found for ${op.name}`)
+          skipped++
           return null
         }
         // Some operations (e.g. top-ups) have no wallet on their origin
-        // transaction. Fall back to the first wallet so the reconciliator can
-        // still attach them to an account (vendorAccountId must match the
-        // vendorId of a saved account, otherwise the whole run fails).
+        // transaction. The reconciliator requires vendorAccountId to match the
+        // vendorId of a saved account, otherwise the whole run throws.
         const wallet = transaction.wallet
-        const walletId = wallet ? wallet.uuid : cards[0] && cards[0].id
+        const walletId = wallet ? wallet.uuid : fallbackWalletId
         if (!walletId) {
-          log('warn', `No wallet found for operation ${op.name}, skipping it`)
+          log(
+            'warn',
+            `No wallet on operation "${op.name}" (${op.date}) and ${cards.length} wallets to choose from, skipping it`
+          )
+          skipped++
+          return null
+        }
+        if (!knownWalletIds.has(walletId)) {
+          // Would make BankingReconciliator throw "Transaction without account"
+          log(
+            'warn',
+            `Operation "${op.name}" references unknown wallet ${walletId}, skipping it`
+          )
+          skipped++
           return null
         }
         const date = new Date(op.date).toISOString()
@@ -104,6 +125,12 @@ class SwileConnector extends BaseKonnector {
         }
       })
       .filter(Boolean)
+
+    log(
+      'info',
+      `Parsed ${operations.length} operations from ${ops.length} fetched (${skipped} skipped)`
+    )
+    return operations
   }
 }
 
@@ -149635,7 +149662,7 @@ const fs = __webpack_require__(149);
 
 const path = __webpack_require__(142);
 
-let manifest = typeof {"version":"0.3.2","name":"Swile","type":"konnector","language":"node","icon":"icon.svg","slug":"swile","source":"git://github.com/florian-bellencontre/cozy-swile-connector.git#build","editor":"zdimension","vendor_link":"https://swile.co","categories":["banking"],"fields":{"login":{"type":"email"},"password":{"type":"password"}},"data_types":["bankAccounts","bankTransactions"],"screenshots":[],"permissions":{"bank.accounts":{"type":"io.cozy.bank.accounts"},"bank.operations":{"type":"io.cozy.bank.operations"},"accounts":{"type":"io.cozy.accounts"},"bank.balancehistories":{"description":"Required to save balance histories","type":"io.cozy.bank.balancehistories"},"files":{"type":"io.cozy.files"}},"developer":{"name":"Tom Niget","url":"https://github.com/zdimension"},"langs":["fr","en"],"locales":{"fr":{"short_description":"Récupère vos opérations bancaires","long_description":"Récupère vos opérations bancaires","permissions":{"bank.accounts":{"description":"Utilisé pour enregistrer la liste de vos comptes bancaires"},"bank.operations":{"description":"Utilisé pour enregistrer les transactions bancaires de vos comptes"},"accounts":{"description":"Utilisé pour obtenir les données du compte"},"bank.balancehistories":{"description":"Utilisé pour enregistrer l'historique du solde de vos comptes"}}},"en":{"short_description":"Retrieves your bank operations","long_description":"Retrieves your bank operations","permissions":{"bank.accounts":{"description":"Required to save the list of bank accounts"},"bank.operations":{"description":"Required to save your bank operations"},"accounts":{"description":"Required to get the account's data"},"bank.balancehistories":{"description":"Required to save balance histories"}}}},"manifest_version":"2"} === 'undefined' ? {} : {"version":"0.3.2","name":"Swile","type":"konnector","language":"node","icon":"icon.svg","slug":"swile","source":"git://github.com/florian-bellencontre/cozy-swile-connector.git#build","editor":"zdimension","vendor_link":"https://swile.co","categories":["banking"],"fields":{"login":{"type":"email"},"password":{"type":"password"}},"data_types":["bankAccounts","bankTransactions"],"screenshots":[],"permissions":{"bank.accounts":{"type":"io.cozy.bank.accounts"},"bank.operations":{"type":"io.cozy.bank.operations"},"accounts":{"type":"io.cozy.accounts"},"bank.balancehistories":{"description":"Required to save balance histories","type":"io.cozy.bank.balancehistories"},"files":{"type":"io.cozy.files"}},"developer":{"name":"Tom Niget","url":"https://github.com/zdimension"},"langs":["fr","en"],"locales":{"fr":{"short_description":"Récupère vos opérations bancaires","long_description":"Récupère vos opérations bancaires","permissions":{"bank.accounts":{"description":"Utilisé pour enregistrer la liste de vos comptes bancaires"},"bank.operations":{"description":"Utilisé pour enregistrer les transactions bancaires de vos comptes"},"accounts":{"description":"Utilisé pour obtenir les données du compte"},"bank.balancehistories":{"description":"Utilisé pour enregistrer l'historique du solde de vos comptes"}}},"en":{"short_description":"Retrieves your bank operations","long_description":"Retrieves your bank operations","permissions":{"bank.accounts":{"description":"Required to save the list of bank accounts"},"bank.operations":{"description":"Required to save your bank operations"},"accounts":{"description":"Required to get the account's data"},"bank.balancehistories":{"description":"Required to save balance histories"}}}},"manifest_version":"2"};
+let manifest = typeof {"version":"0.4.0","name":"Swile","type":"konnector","language":"node","icon":"icon.svg","slug":"swile","source":"git://github.com/florian-bellencontre/cozy-swile-connector.git#build","editor":"zdimension","vendor_link":"https://swile.co","categories":["banking"],"fields":{"login":{"type":"email"},"password":{"type":"password"}},"data_types":["bankAccounts","bankTransactions"],"screenshots":[],"permissions":{"bank.accounts":{"type":"io.cozy.bank.accounts"},"bank.operations":{"type":"io.cozy.bank.operations"},"accounts":{"type":"io.cozy.accounts"},"bank.balancehistories":{"description":"Required to save balance histories","type":"io.cozy.bank.balancehistories"},"files":{"type":"io.cozy.files"}},"developer":{"name":"Tom Niget","url":"https://github.com/zdimension"},"langs":["fr","en"],"locales":{"fr":{"short_description":"Récupère vos opérations bancaires","long_description":"Récupère vos opérations bancaires","permissions":{"bank.accounts":{"description":"Utilisé pour enregistrer la liste de vos comptes bancaires"},"bank.operations":{"description":"Utilisé pour enregistrer les transactions bancaires de vos comptes"},"accounts":{"description":"Utilisé pour obtenir les données du compte"},"bank.balancehistories":{"description":"Utilisé pour enregistrer l'historique du solde de vos comptes"}}},"en":{"short_description":"Retrieves your bank operations","long_description":"Retrieves your bank operations","permissions":{"bank.accounts":{"description":"Required to save the list of bank accounts"},"bank.operations":{"description":"Required to save your bank operations"},"accounts":{"description":"Required to get the account's data"},"bank.balancehistories":{"description":"Required to save balance histories"}}}},"manifest_version":"2"} === 'undefined' ? {} : {"version":"0.4.0","name":"Swile","type":"konnector","language":"node","icon":"icon.svg","slug":"swile","source":"git://github.com/florian-bellencontre/cozy-swile-connector.git#build","editor":"zdimension","vendor_link":"https://swile.co","categories":["banking"],"fields":{"login":{"type":"email"},"password":{"type":"password"}},"data_types":["bankAccounts","bankTransactions"],"screenshots":[],"permissions":{"bank.accounts":{"type":"io.cozy.bank.accounts"},"bank.operations":{"type":"io.cozy.bank.operations"},"accounts":{"type":"io.cozy.accounts"},"bank.balancehistories":{"description":"Required to save balance histories","type":"io.cozy.bank.balancehistories"},"files":{"type":"io.cozy.files"}},"developer":{"name":"Tom Niget","url":"https://github.com/zdimension"},"langs":["fr","en"],"locales":{"fr":{"short_description":"Récupère vos opérations bancaires","long_description":"Récupère vos opérations bancaires","permissions":{"bank.accounts":{"description":"Utilisé pour enregistrer la liste de vos comptes bancaires"},"bank.operations":{"description":"Utilisé pour enregistrer les transactions bancaires de vos comptes"},"accounts":{"description":"Utilisé pour obtenir les données du compte"},"bank.balancehistories":{"description":"Utilisé pour enregistrer l'historique du solde de vos comptes"}}},"en":{"short_description":"Retrieves your bank operations","long_description":"Retrieves your bank operations","permissions":{"bank.accounts":{"description":"Required to save the list of bank accounts"},"bank.operations":{"description":"Required to save your bank operations"},"accounts":{"description":"Required to get the account's data"},"bank.balancehistories":{"description":"Required to save balance histories"}}}},"manifest_version":"2"};
 
 if (process.env.NODE_ENV !== undefined && process.env.NODE_ENV !== 'none' && process.env.NODE_ENV !== 'production') {
   try {
@@ -214177,29 +214204,50 @@ class SwileApi {
   }
 
   async getCards() {
-    return (await this.fetch(`v0/wallets`)).wallets.filter(
+    const wallets = (await this.fetch(`v0/wallets`)).wallets.filter(
       w => w.id !== 'null-wallet'
     )
+    log('info', `Found ${wallets.length} wallet(s)`)
+    return wallets
   }
 
+  // Paginate instead of asking for one huge page: the API silently caps the
+  // page size, which would truncate the history without any error.
   async getAllOperations() {
-    return (await this.fetch(`v3/user/operations?per=999999`)).items.filter(
-      op => {
-        op.transactions = op.transactions.filter(t => t.type === 'ORIGIN')
-        if (op.transactions.length !== 1) {
-          log(
-            'warn',
-            `operation ${op.id} has ${op.transactions.length} transactions`
-          )
-          return false
-        }
-        const transaction = op.transactions[0]
-        return (
-          transaction.status === 'CAPTURED' ||
-          transaction.status === 'VALIDATED'
-        )
+    const perPage = 100
+    const maxPages = 200
+    const items = []
+
+    for (let page = 1; page <= maxPages; page++) {
+      const response = await this.fetch(
+        `v3/user/operations?per=${perPage}&page=${page}`
+      )
+      const pageItems = response.items || []
+      items.push(...pageItems)
+      if (pageItems.length < perPage) {
+        break
       }
-    )
+      if (page === maxPages) {
+        log('warn', `Reached the ${maxPages} pages limit, history may be cut`)
+      }
+    }
+
+    log('info', `Fetched ${items.length} operations`)
+
+    return items.filter(op => {
+      op.transactions = (op.transactions || []).filter(t => t.type === 'ORIGIN')
+      if (op.transactions.length !== 1) {
+        log(
+          'warn',
+          `operation ${op.id} has ${op.transactions.length} origin transactions, ignoring it`
+        )
+        return false
+      }
+      const transaction = op.transactions[0]
+      return (
+        transaction.status === 'CAPTURED' || transaction.status === 'VALIDATED'
+      )
+    })
   }
 }
 
