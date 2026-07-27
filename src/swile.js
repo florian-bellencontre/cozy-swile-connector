@@ -1,4 +1,8 @@
-const { log } = require('cozy-konnector-libs')
+const { log, errors } = require('cozy-konnector-libs')
+// Node 16 has no global fetch/Headers: cozy-konnector-libs only assigns
+// global.fetch, so require node-fetch explicitly and use a plain object for
+// the headers.
+const fetch = require('node-fetch')
 
 const API_ROOT = 'https://neobank-api.swile.co/api'
 
@@ -7,10 +11,10 @@ class SwileApi {
     this.email = email
     this.token = token
 
-    const myHeaders = new Headers()
-    myHeaders.append('Authorization', 'Bearer ' + token)
-    myHeaders.append('Content-Type', 'application/json')
-    this.headers = myHeaders
+    this.headers = {
+      Authorization: 'Bearer ' + token,
+      'Content-Type': 'application/json'
+    }
   }
 
   makeRequestOptions(method, body = null) {
@@ -24,10 +28,17 @@ class SwileApi {
 
   async fetch(url, method = 'GET', body = null) {
     log('info', `req on ${url}: ${method} ${body}`)
-    return await fetch(
+    const response = await fetch(
       `${API_ROOT}/${url}`,
       this.makeRequestOptions(method, body)
-    ).then(response => response.json())
+    )
+    if (!response.ok) {
+      log('error', `${method} ${url} failed with status ${response.status}`)
+      throw new Error(
+        response.status === 401 ? errors.LOGIN_FAILED : errors.VENDOR_DOWN
+      )
+    }
+    return await response.json()
   }
 
   async getCards() {
