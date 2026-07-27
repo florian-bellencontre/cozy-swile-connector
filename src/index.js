@@ -40,7 +40,7 @@ class SwileConnector extends BaseKonnector {
         categorizedTransactions
       )
 
-      log('info', savedAccounts)
+      log('info', `Saved ${savedAccounts.length} account(s)`)
 
       const balances = await fetchBalances(savedAccounts)
       await saveBalances(balances)
@@ -55,34 +55,55 @@ class SwileConnector extends BaseKonnector {
 
   parseAccounts(cards) {
     return cards.map(card => {
+      const balance = card.balance || {}
       return {
         vendorId: card.id,
         number: card.id,
-        currency: card.balance.currency.iso_3,
+        currency: (balance.currency && balance.currency.iso_3) || 'EUR',
         institutionLabel: 'Swile',
         label: card.label,
-        balance: card.balance.value,
+        balance: balance.value || 0,
         type: 'Checkings'
       }
     })
   }
 
   parseOps(ops, cards) {
-    return ops
+    const knownWalletIds = new Set(cards.map(card => card.id))
+    // Only fall back to a single wallet when there is no ambiguity: with
+    // several wallets we cannot guess which one an operation belongs to, and
+    // attaching it to the wrong account would silently corrupt the balances.
+    const fallbackWalletId = cards.length === 1 ? cards[0].id : null
+    let skipped = 0
+
+    const operations = ops
       .map(op => {
         const transaction = op.transactions.find(t => t.type === 'ORIGIN')
         if (!transaction) {
           log('warn', `No origin transaction found for ${op.name}`)
+          skipped++
           return null
         }
         // Some operations (e.g. top-ups) have no wallet on their origin
-        // transaction. Fall back to the first wallet so the reconciliator can
-        // still attach them to an account (vendorAccountId must match the
-        // vendorId of a saved account, otherwise the whole run fails).
+        // transaction. The reconciliator requires vendorAccountId to match the
+        // vendorId of a saved account, otherwise the whole run throws.
         const wallet = transaction.wallet
-        const walletId = wallet ? wallet.uuid : cards[0] && cards[0].id
+        const walletId = wallet ? wallet.uuid : fallbackWalletId
         if (!walletId) {
-          log('warn', `No wallet found for operation ${op.name}, skipping it`)
+          log(
+            'warn',
+            `No wallet on operation "${op.name}" (${op.date}) and ${cards.length} wallets to choose from, skipping it`
+          )
+          skipped++
+          return null
+        }
+        if (!knownWalletIds.has(walletId)) {
+          // Would make BankingReconciliator throw "Transaction without account"
+          log(
+            'warn',
+            `Operation "${op.name}" references unknown wallet ${walletId}, skipping it`
+          )
+          skipped++
           return null
         }
         const date = new Date(op.date).toISOString()
@@ -99,6 +120,12 @@ class SwileConnector extends BaseKonnector {
         }
       })
       .filter(Boolean)
+
+    log(
+      'info',
+      `Parsed ${operations.length} operations from ${ops.length} fetched (${skipped} skipped)`
+    )
+    return operations
   }
 }
 

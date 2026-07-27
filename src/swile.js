@@ -42,29 +42,50 @@ class SwileApi {
   }
 
   async getCards() {
-    return (await this.fetch(`v0/wallets`)).wallets.filter(
+    const wallets = (await this.fetch(`v0/wallets`)).wallets.filter(
       w => w.id !== 'null-wallet'
     )
+    log('info', `Found ${wallets.length} wallet(s)`)
+    return wallets
   }
 
+  // Paginate instead of asking for one huge page: the API silently caps the
+  // page size, which would truncate the history without any error.
   async getAllOperations() {
-    return (await this.fetch(`v3/user/operations?per=999999`)).items.filter(
-      op => {
-        op.transactions = op.transactions.filter(t => t.type === 'ORIGIN')
-        if (op.transactions.length !== 1) {
-          log(
-            'warn',
-            `operation ${op.id} has ${op.transactions.length} transactions`
-          )
-          return false
-        }
-        const transaction = op.transactions[0]
-        return (
-          transaction.status === 'CAPTURED' ||
-          transaction.status === 'VALIDATED'
-        )
+    const perPage = 100
+    const maxPages = 200
+    const items = []
+
+    for (let page = 1; page <= maxPages; page++) {
+      const response = await this.fetch(
+        `v3/user/operations?per=${perPage}&page=${page}`
+      )
+      const pageItems = response.items || []
+      items.push(...pageItems)
+      if (pageItems.length < perPage) {
+        break
       }
-    )
+      if (page === maxPages) {
+        log('warn', `Reached the ${maxPages} pages limit, history may be cut`)
+      }
+    }
+
+    log('info', `Fetched ${items.length} operations`)
+
+    return items.filter(op => {
+      op.transactions = (op.transactions || []).filter(t => t.type === 'ORIGIN')
+      if (op.transactions.length !== 1) {
+        log(
+          'warn',
+          `operation ${op.id} has ${op.transactions.length} origin transactions, ignoring it`
+        )
+        return false
+      }
+      const transaction = op.transactions[0]
+      return (
+        transaction.status === 'CAPTURED' || transaction.status === 'VALIDATED'
+      )
+    })
   }
 }
 
