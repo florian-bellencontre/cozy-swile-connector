@@ -1,8 +1,8 @@
 const { log, errors } = require('cozy-konnector-libs')
-// Node 16 has no global fetch/Headers: cozy-konnector-libs only assigns
-// global.fetch, so require node-fetch explicitly and use a plain object for
-// the headers.
-const fetch = require('node-fetch')
+// Node 16 has no global fetch. Webpack wraps the module so the function is
+// exposed on .default, while a plain node require returns it directly.
+const nodeFetch = require('node-fetch')
+const fetch = nodeFetch.default || nodeFetch
 
 const API_ROOT = 'https://neobank-api.swile.co/api'
 

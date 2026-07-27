@@ -1,7 +1,8 @@
 const { log, errors } = require('cozy-konnector-libs')
-// Node 16 has no global fetch: cozy-konnector-libs assigns global.fetch as a
-// side effect, but requiring it explicitly keeps this module independent.
-const fetch = require('node-fetch')
+// Node 16 has no global fetch. Webpack wraps the module so the function is
+// exposed on .default, while a plain node require returns it directly.
+const nodeFetch = require('node-fetch')
+const fetch = nodeFetch.default || nodeFetch
 
 const TOKEN_URL = 'https://directory.swile.co/oauth/token'
 // OAuth client id of the official Swile web app. It is public: it is shipped
